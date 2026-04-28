@@ -11,14 +11,14 @@ description: 把主题小店玩法项目生成为一个可直接打开游玩的�
 
 > 用户给一句店铺想法 → Agent 定概念 → 自动生成内容与素材 → 导出打开即玩的静态页 → QA → 发布公开 URL
 
-内部实现必须同步当前项目的新架构：OAuth / LLM concept、`world-shop-agent/v1` handshake、本地或远程 build agent、Neta creative 图像管线、主题色校验、装饰与按钮贴纸、音效资源、ready session 与静态注入。
+内部实现必须同步当前项目的新架构：OAuth / LLM concept、`world-shop-agent/v1` handshake、本地或远程 build agent、Neta creative 图像管线、主题色校验与自动对比度修正、可持久化/可缩放装饰布局、装饰与按钮贴纸、音效资源、ready session 与静态注入。
 
 ## 目标
 
 输出一个：
 - 已完成主题定制
 - 打开就能玩，不进入 creator 建店页
-- 保留原项目核心玩法体验：合成、订单、补给、图鉴、收藏、装饰、助手、入场序章、经营回顾、音效
+- 保留原项目核心玩法体验：合成、订单、补给、图鉴、收藏、装饰拖拽与缩放、助手、入场序章、经营回顾、音效
 - 资源完整、无默认旧素材冒充新成品
 - 可通过公开 URL 访问
 
@@ -41,7 +41,7 @@ description: 把主题小店玩法项目生成为一个可直接打开游玩的�
 当前核心文件：
 - `server.mjs`：本地 orchestrator、静态服务器、session/build API、SSE、LLM content pack 编排、agent provider 路由
 - `creator.js`：前端建店/确认/构建进度/进入店铺流程
-- `app.js`：核心合成店铺玩法、runtimeConfig 注入、装饰贴纸、UI 按钮贴纸、图鉴/收藏/订单等
+- `app.js`：核心合成店铺玩法、runtimeConfig 注入、主题对比度归一化、装饰贴纸拖拽/缩放/持久化、UI 按钮贴纸、图鉴/收藏/订单等
 - `styles.css`：游戏主体与 creator/building 页面样式
 - `sfx.js`：音效系统
 - `assets/sfx/`：本地音效文件，静态导出必须包含
@@ -121,6 +121,8 @@ shopText, shopInk, shopMuted
 - 文本颜色必须和 panel、card、tab、button、dialogue bubble、modal、toast、report 背景明显区分。
 - modal / popup backdrop 必须是偏暗的店铺遮罩，不要使用明亮发白的 veil。
 - 助手/店员区域是主要视觉组件，不能只当小状态条处理。
+- 当前项目会在前端/后端用 `normalizeThemeContrast()` 派生可读色 token，例如 `shopOnPanel`、`shopOnCard`、`shopOnButton`、`shopMutedOnBubble` 等；生成时仍应优先给出高对比基础色，不要依赖自动修正掩盖明显不可读的主题。
+- `shopLightSoft` 可以是 `rgba()`，其他基础 token 优先使用 `#RRGGBB`。
 
 ### 阶段 3：通过 build agent 生成内容与素材
 
@@ -235,6 +237,12 @@ shopText, shopInk, shopMuted
 - 必须是可拖拽摆放的 isolated props
 - 风格为 warm handcrafted casual game sticker style
 
+运行体验要求：
+- 静态成品必须保留装饰贴纸拖拽摆放能力。
+- 当前项目支持通过角标缩放装饰贴纸，静态成品不得因导出遗漏样式或事件而破坏缩放。
+- 装饰位置会进入游戏存档，并兼容旧版 `localStorage` 装饰位置；导出/归档时不要丢弃 `decorPositions`、`decorSlotPositions` 或 `decorEntries`。
+- 装饰布局作用域与 `shopName`、`worldName`、`decorationManifestUrl` 相关；更换主题/manifest 时不要复用旧主题的错位布局。
+
 产物要求：
 - `shop_decor_stickers_2x3.png`
 - `shop_decorations/manifest.json`
@@ -315,6 +323,11 @@ shopText, shopInk, shopMuted
 - `decorationManifestUrl`
 - `uiButtonManifestUrl`
 
+`savedState` / 存档如被导出，应保留或兼容：
+- `decorPositions`
+- `decorSlotPositions`
+- 旧版 `shop_decor_positions` localStorage entries（归档结构中通常叫 `decorEntries`）
+
 `sources` 至少应能说明：
 - LLM 来源
 - builder / orchestrator 来源
@@ -356,6 +369,7 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
    - 不要求 OAuth 登录
    - 不展示建店输入页
    - 页面加载后直接调用或等价执行：`resetShopState(runtimeConfig, { introSeen: false })`，并显示 `#appShell`
+   - 如果导出包含玩家已布置好的装饰布局，应在 reset/import 后恢复 `decorPositions`、`decorSlotPositions` 或等价 `decorEntries`
 6. 路径处理：
    - 所有 `/generated/...`、`/assets/...`、`/Downloads/...` 等必须转换为静态站点内可访问路径，优先相对路径或站内绝对路径
    - 不允许引用本地绝对文件路径
@@ -385,7 +399,7 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
 检查：
 - `session.status === "ready"`
 - `session.enteredShop === true` 或静态页会直接进店
-- `runtimeConfig.theme` 25 个必需 token 全部存在
+- `runtimeConfig.theme` 25 个必需基础 token 全部存在，并且页面运行时派生出的可读色 token 生效
 - `runtimeConfig.contentPack` 结构完整
 - `runtimeConfig.tileAssetBase` 可访问
 - `runtimeConfig.tileManifest.bindings` 存在
@@ -399,7 +413,7 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
 - 打开 `index.html` 直接显示游戏，不是 creator 建店页
 - 商品图正常显示，不是旧默认素材
 - 助手立绘正常显示，不是旧默认素材
-- 装饰贴纸可见/可拖动
+- 装饰贴纸可见/可拖动/可缩放，刷新后布局能按当前店铺作用域恢复
 - 大厅、图鉴、收藏、重开、垃圾桶按钮贴纸正常
 - 入场序章、订单、补给、图鉴、收藏、经营回顾基本可用
 - 音效文件不 404；浏览器限制下未自动播放不算失败，但用户交互后应可触发音效
@@ -478,7 +492,8 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
 
 必须返工或报告阻塞的情况：
 - concept 缺少核心字段
-- theme token 缺失或明显不可读
+- theme token 缺失或明显不可读，且自动对比度修正后仍有主要 UI 文本不可读
+- 装饰布局导出后不可拖拽、不可缩放，或刷新后明显丢失当前店铺的布局状态
 - contentPack 缺少 sources/clients/chains/recipes/blessings/introSequence
 - session 不是 `ready`
 - session 缺少 `runtimeConfig` 或关键 manifest URL
