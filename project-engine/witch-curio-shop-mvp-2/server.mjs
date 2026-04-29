@@ -2739,7 +2739,7 @@ const server = createServer(async (request, response) => {
       url.pathname === "/" || url.pathname === "/fresh"
         ? path.join(PROJECT_ROOT, "index.html")
         : url.pathname.startsWith("/Downloads/")
-          ? resolveUnder("/Users/yves", url.pathname)
+          ? resolveUnder(PROJECT_ROOT, url.pathname)
           : url.pathname.startsWith("/generated/")
             ? resolveUnder(PROJECT_ROOT, url.pathname)
             : resolveUnder(PROJECT_ROOT, url.pathname);

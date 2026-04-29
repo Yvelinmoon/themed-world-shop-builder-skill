@@ -16,7 +16,7 @@
       "tileSplit": {
         "rows": 4,
         "cols": 8,
-        "script": "/Users/yves/witch-curio-shop-mvp-2/builder/scripts/split_image_grid.py"
+        "script": "builder/scripts/split_image_grid.py"
       },
       "decorSplit": {
         "rows": 2,

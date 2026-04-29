@@ -11,6 +11,7 @@ It intentionally includes the scripts and runtime assets the skill directly depe
 - Neta creative asset pipeline: `builder/local-asset-pipeline.mjs`
 - local/remote agent contract: `builder/agent-handshake.md`
 - shop-builder profile and prompts: `builder/skills/shop-builder/*`
+  - `profile.json` uses relative helper paths, e.g. `builder/scripts/split_image_grid.py`, so the subset is not tied to an upstream absolute checkout.
 - split helper: `builder/scripts/split_image_grid.py`
 - packaged sound effects: `assets/sfx/*.ogg`
 
@@ -22,4 +23,4 @@ Not included:
 - raw source audio zip archives under `assets/sfx/_sources`
 - `.git/`
 
-Use `npm install` in this directory if you need to run the included engine subset independently.
+Use `npm install` in this directory if you need to run the included engine subset independently. Generated output will be created under this subset's local `generated/` directory. If a workspace active project exists, use it as the freshest engine; otherwise use this included subset as the skill-local engine.

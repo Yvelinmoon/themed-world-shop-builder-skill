@@ -37,7 +37,7 @@ Main user-facing flow:
 
 - `SKILL.md` — full skill definition and execution requirements.
 - `project-reference/ENGINE_REFERENCE.md` — explains how the skill references and uses the world-shop engine.
-- `project-engine/witch-curio-shop-mvp-2/` — included engine subset with the scripts and runtime assets directly used by this skill:
+- `project-engine/witch-curio-shop-mvp-2/` — included engine subset with the scripts and runtime assets directly used by this skill. It can be run from its own directory after `npm install`; generated output will be created under its local `generated/` directory. The copied profile uses relative helper paths so it is not tied to the original upstream checkout:
   - `server.mjs`
   - `app.js`
   - `creator.js`
@@ -50,7 +50,7 @@ Main user-facing flow:
   - `builder/skills/shop-builder/*`
   - `assets/sfx/*.ogg`
 
-The included engine subset intentionally excludes generated artifacts, auth caches, `node_modules`, `.git`, and raw source zip archives.
+The included engine subset intentionally excludes generated artifacts, auth caches, `node_modules`, `.git`, and raw source zip archives. If a workspace active project exists, use it as the freshest engine; otherwise use this included subset as the skill-local engine.
 
 ## Suggested skill name
 
