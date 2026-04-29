@@ -35,6 +35,9 @@ description: 把主题小店玩法项目生成为一个可直接打开游玩的�
 
 ## 目录与关键文件
 
+独立引擎引用：
+- 先阅读 `project-reference/ENGINE_REFERENCE.md`，它记录了本 skill 依赖 `witch-curio-shop-mvp-2` 的哪些部分、运行产物、静态注入契约、Neta skill 登录方式、Linux 图片转换注意事项、以及图名绑定 QA。
+
 项目根目录：
 - `/workspace/03-gameplay-projects 🎮/active/witch-curio-shop-mvp-2`
 
@@ -128,6 +131,15 @@ shopText, shopInk, shopMuted
 
 优先复用项目现有生产链：
 
+0. 如需真实 Neta creative 出图，先用 **Neta skill device login** 登录，而不是依赖项目内前端 OAuth：
+   ```bash
+   NETA_CONFIG_DIR="<project>/generated/.neta-skill-config" \
+     npx -y @talesofai/neta-skills@latest login --action request-code
+
+   NETA_CONFIG_DIR="<project>/generated/.neta-skill-config" \
+     npx -y @talesofai/neta-skills@latest login --action verify-code
+   ```
+   然后从 Neta skill 登录缓存中取 access token，作为 worker 环境变量 `NETA_TOKEN` 注入。本 token 只用于运行期，严禁写入静态导出目录、`/public` 或 git 仓库。
 1. 启动主服务：
    ```bash
    npm start
@@ -171,6 +183,12 @@ shopText, shopInk, shopMuted
 - 不允许在未确认当前轮结果可用时提前宣布下一轮完成。
 - 不允许把项目默认旧素材当成正式完成结果。
 - 每轮关键资产完成后，都要向用户返回一条沉浸式进度播报。
+
+#### 引擎兼容性注意
+
+- 如果图片管线报错 `spawn /usr/bin/sips ENOENT`，说明当前 Linux 环境缺少 macOS 专用 `sips`，这是本地转换兼容问题，不是 Neta 出图失败。
+- 可用 ImageMagick `convert` 或等价跨平台转换路径替代 `sips`，再重启 worker 重新跑构建。
+- 处理这类兼容问题时，不要降低“必须真实出图”的标准，也不要退回程序占位图作为最终成品。
 
 ### 阶段 4：生成格式要求
 
@@ -374,6 +392,16 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
    - 所有 `/generated/...`、`/assets/...`、`/Downloads/...` 等必须转换为静态站点内可访问路径，优先相对路径或站内绝对路径
    - 不允许引用本地绝对文件路径
 
+#### 图片与名称绑定 QA
+
+除文件存在外，必须检查**图片内容、manifest 绑定、物品名称、合成链语义**是否一致：
+
+- `contentPack.chains[].items[]` 中的名称应和对应 tile 视觉一致。
+- `runtimeConfig.tileManifest.bindings[itemId].url` 应指向正确的切图。
+- 不允许出现明显错配，例如“石头图片叫橡木原木”“木头合成成无关石头”。
+- 如果 Neta sheet 生成顺序和计划不一致，优先重新生成；如果图片可用但顺序错位，可以重排 `tileManifest.bindings` 并同步修正 content pack 链名/物品名。
+- 合成线应有语义连续性，同线升级应像同一类货的递进；跨线只通过指定 recipe 产出隐藏物，否则应进入废料/失败结果。
+
 ### 阶段 8：QA check
 
 发布前必须检查：
@@ -411,7 +439,7 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
 
 检查：
 - 打开 `index.html` 直接显示游戏，不是 creator 建店页
-- 商品图正常显示，不是旧默认素材
+- 商品图正常显示，不是旧默认素材；商品图和名称/详情/合成链语义一致
 - 助手立绘正常显示，不是旧默认素材
 - 装饰贴纸可见/可拖动/可缩放，刷新后布局能按当前店铺作用域恢复
 - 大厅、图鉴、收藏、重开、垃圾桶按钮贴纸正常
@@ -497,7 +525,7 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
 - contentPack 缺少 sources/clients/chains/recipes/blessings/introSequence
 - session 不是 `ready`
 - session 缺少 `runtimeConfig` 或关键 manifest URL
-- 生成页仍加载旧默认素材、旧默认文案或旧默认绝对路径
+- 图片和 manifest/content pack 明显错配，例如石头图绑定成木头名，或合成链出现无关跳变
 - 静态页仍进入 creator 建店页
 - 分享目录缺失 `index.html / app.js / styles.css / sfx.js / session.json / generated... / assets/sfx...` 中的必要项
 - 任何素材 manifest 指向不存在文件
