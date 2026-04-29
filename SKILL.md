@@ -37,9 +37,12 @@ description: 把主题小店玩法项目生成为一个可直接打开游玩的�
 
 独立引擎引用：
 - 先阅读 `project-reference/ENGINE_REFERENCE.md`，它记录了本 skill 依赖 `witch-curio-shop-mvp-2` 的哪些部分、运行产物、静态注入契约、Neta skill 登录方式、Linux 图片转换注意事项、以及图名绑定 QA。
+- 本 skill 仓库内已内置一份可直接引用的引擎子集：`project-engine/witch-curio-shop-mvp-2/`。这里复制了运行/构建必需脚本和资源，不包含 `node_modules`、生成产物、私密登录缓存、`.git` 或原始音频 zip。
+- 当工作区存在活跃项目 `/workspace/03-gameplay-projects 🎮/active/witch-curio-shop-mvp-2` 时，优先使用活跃项目；当活跃项目不存在或需要独立复现时，可使用 `project-engine/witch-curio-shop-mvp-2/` 作为内置引擎副本。
 
 项目根目录：
-- `/workspace/03-gameplay-projects 🎮/active/witch-curio-shop-mvp-2`
+- 首选活跃项目：`/workspace/03-gameplay-projects 🎮/active/witch-curio-shop-mvp-2`
+- 内置引擎子集：`project-engine/witch-curio-shop-mvp-2/`
 
 当前核心文件：
 - `server.mjs`：本地 orchestrator、静态服务器、session/build API、SSE、LLM content pack 编排、agent provider 路由

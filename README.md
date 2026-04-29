@@ -36,6 +36,21 @@ Main user-facing flow:
 ## Files
 
 - `SKILL.md` — full skill definition and execution requirements.
+- `project-reference/ENGINE_REFERENCE.md` — explains how the skill references and uses the world-shop engine.
+- `project-engine/witch-curio-shop-mvp-2/` — included engine subset with the scripts and runtime assets directly used by this skill:
+  - `server.mjs`
+  - `app.js`
+  - `creator.js`
+  - `styles.css`
+  - `sfx.js`
+  - `index.html`
+  - `builder/local-codex-worker.mjs`
+  - `builder/local-asset-pipeline.mjs`
+  - `builder/agent-handshake.md`
+  - `builder/skills/shop-builder/*`
+  - `assets/sfx/*.ogg`
+
+The included engine subset intentionally excludes generated artifacts, auth caches, `node_modules`, `.git`, and raw source zip archives.
 
 ## Suggested skill name
 
