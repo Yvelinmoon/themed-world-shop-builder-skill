@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.mjs",
     "start:local-worker": "node builder/local-codex-worker.mjs",
-    "start:remote-agent": "node builder/mock-remote-agent.mjs"
+    "start:remote-agent": "node builder/mock-remote-agent.mjs",
+    "qa:prompt-templates": "node builder/qa-prompt-templates.mjs"
   },
   "dependencies": {
     "pngjs": "^7.0.0",

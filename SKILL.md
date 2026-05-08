@@ -13,6 +13,43 @@ description: 把主题小店玩法项目生成为一个可直接打开游玩的�
 
 内部实现必须同步当前项目的新架构：OAuth / LLM concept、`world-shop-agent/v1` handshake、本地或远程 build agent、Neta creative 图像管线、主题色校验与自动对比度修正、可持久化/可缩放装饰布局、装饰与按钮贴纸、音效资源、ready session 与静态注入。
 
+## 强制前置步骤：Neta device login
+
+在运行任何创建商店 / 生成素材 / 启动 build agent / 导出成品流程之前，**必须先执行 Neta Skills 设备登录检查**。这是本 skill 的第 0 阶段，优先级高于 concept、content pack、素材生成和静态导出。
+
+要求：
+- 每次开始主题小店创建任务时，先检查当前引擎项目的 Neta skill 登录缓存是否存在且可用。
+- 如果没有登录、登录失效、找不到 access token，必须先走 device login，不得继续进入 build。
+- 登录缓存只能放在引擎运行目录的 `generated/.neta-skill-config` 下，不能写入 `supermarket/stores/`、`outbox/`、`/public`、归档目录或 git 仓库。
+- token 只能作为运行期环境变量传给 worker，例如 `NETA_TOKEN`，严禁写入静态导出、QA 报告、发布目录或任何可分享文件。
+- 若用户尚未完成授权，应暂停在登录阶段，并明确说明“开店前需要先把 Neta 创作通道接通”。
+
+推荐命令，`<project>` 应替换为实际使用的引擎根目录：
+
+```bash
+NETA_CONFIG_DIR="<project>/generated/.neta-skill-config" \
+  npx -y @talesofai/neta-skills@latest login --action request-code
+
+NETA_CONFIG_DIR="<project>/generated/.neta-skill-config" \
+  npx -y @talesofai/neta-skills@latest login --action verify-code
+```
+
+设备登录完成并确认 token 可供运行期读取后，才能进入后续阶段。
+
+## 阶段 0：登录与引擎准备
+
+1. 选择引擎目录：优先活跃项目 `/workspace/03-gameplay-projects 🎮/active/witch-curio-shop-mvp-2`；否则使用本 skill 的 `project-engine/witch-curio-shop-mvp-2/` 或 workspace 本地引擎副本。
+2. 设置：
+   ```bash
+   NETA_CONFIG_DIR="<project>/generated/.neta-skill-config"
+   ```
+3. 检查 Neta skill 登录缓存；如不可用，执行 device login。
+4. 从登录缓存中取得运行期 access token，并仅以环境变量方式注入 worker：
+   ```bash
+   NETA_TOKEN="<runtime-only-token>"
+   ```
+5. 完成以上步骤后，才允许进入“阶段 1：准备建店输入”。
+
 ## 目标
 
 输出一个：
@@ -56,7 +93,7 @@ description: 把主题小店玩法项目生成为一个可直接打开游玩的�
 - `builder/local-asset-pipeline.mjs`：Neta creative 图片生成、切图与 runtimeConfig 产物组装
 - `builder/skills/shop-builder/profile.json`：生成计划，包含 requiredImages、切图行列等
 - `builder/skills/shop-builder/prompt_*.md`：concept、assistant、shop sheet、decor、UI button、world patch 的生成约束
-- `generated/current-session.json`：当前 ready session 常见位置
+- `generated/current-session.json`：当前 ready session 常见位置；这是引擎全局临时态，**不得作为新商店最终导出的 source of truth**，除非它刚由同一 build 生成且通过 cross-shop contamination QA。
 - `generated/build-artifacts/<jobId>/...`：当前 job 的生成图片、切图与 manifest
 - `generated/archives/.../session.json`：可复用的会话归档示例，如项目中存在
 
@@ -162,6 +199,37 @@ shopText, shopInk, shopMuted
 
 #### 当前强制顺序
 
+##### 0.5 per-shop source-of-truth 与污染隔离
+
+每个要发布的商店必须有自己的 source-of-truth。推荐路径：
+
+```text
+supermarket/stores/<slug>/
+├── concept.json
+├── content-pack.json
+├── generated/session.json
+├── generated/build-artifacts/<jobId>/...
+├── static-export/
+└── qa/qa-report.json
+```
+
+硬性规则：
+- 不得把 `engine/generated/current-session.json` 当成最终导出源，除非它刚由本轮同一 build 产生，并且 `concept/runtimeConfig/contentPack/profile.generatedAssets` 均指向本轮商店。
+- 不得用主题专用旧脚本导出其它主题，例如 `export-laoqin-static.mjs`、`export-starbucks-static.mjs`、`mars-build.mjs`、`red-alert` 相关脚本。必须使用 `builder/export-static-shop.mjs` 或等价通用导出器。
+- 禁止把 `/public/<slug>/` 作为唯一修复位置。直接 patch public 只能算临时热修；最终必须回写 `supermarket/stores/<slug>/` 的 locked package，重新导出、QA、发布。
+- 每个静态商店必须自带完整 runtime：theme、contentPack、tileManifest、assistantPortraits、decorationManifestUrl、uiButtonManifestUrl、对应 manifests 和生成资产，且 URL 全部为相对路径。
+- final static 不允许从默认 demo/旧主题补齐缺失内容。`recipes`、`blessings`、intro/order 等如果为空，必须在本店 content pack 中显式为空或写成本店内容；不得让 `mergeContentPack()` 静默混入生日/HP/咖啡/其它旧店默认值。
+- static localStorage/save key 必须按 shop slug/build/shopName/worldName 隔离，或在 static boot 时拒绝不兼容旧存档。全局 key 会让生日店的棋盘、主题、发现、装饰污染皮埃尔店这类新店。
+- static 初始化顺序必须是：读取并 sanitize `window.__SHOP_RUNTIME__` → merge 当前 contentPack → rebuild item index/tile bindings → createInitialState/加载兼容存档 → render。禁止先用默认 runtime 创建棋盘，再切换到本店 runtime。
+- 首屏主题必须预水合：`index.html` 或首屏 CSS 必须写入本店 theme tokens。不能只依赖 JS 启动后 applyThemeTokens；JS 缓存/延迟/报错时也不得露出生日/HP/default 主题。
+- 任何单独重跑的资产板（assistant/shop sheet/decor/UI）都必须写入 session/profile 的 source job，并重新运行 QA。禁止静默混用不同商店的素材。重跑商品板时还必须重新生成/更新 tile contact sheet，并逐格验证图片内容与 manifest 名称一致；重跑 assistant 时必须重新验证四个头像 URL、manifest、静态注入和首屏头像实际解析。
+- 在 `make_image` 前必须扫描 handshake/concept/contentPack/prompt payload，确保不含其它商店名称、助手名、世界名或旧主题关键词。
+- 发布前必须运行 `builder/qa-static-shop.mjs`，对 `index.html/session.json/static-session.js/manifests/runtime URLs` 做污染扫描与绑定矩阵检查。
+- **不要在 skill/Agent 层给静态导出追加、复制或粘贴项目级移动端 CSS 补丁**（例如从其它店铺复制 `Project-level mobile gameplay layout`、`mobile gameplay refinement v2/v3` 之类的大段规则）。移动端布局只能由当前引擎源码/通用导出器自带的稳定 CSS 提供；如果 `qa-mobile-layout.mjs` 因缺少历史补丁而失败，记录为阻塞或需引擎侧修复，不得为了过 QA 在单店 `static-export/styles.css` 或 `/public/<slug>/styles.css` 里追加跨店样式补丁。
+- **移动端玩法布局是发布检查项，不是补丁许可**：静态导出应保留项目级 mobile gameplay layout contract。仅在手机/粗指针断点（默认 `@media (max-width: 760px) and (pointer: coarse)`）下，workbench/play panel 与 5x5 board 应优先出现在 secondary sidebar 内容之前；棋盘应尽量适配首个可用手机视口并保持 1:1；assistant/orders/sources/status 等应压缩、抽屉化或内部滚动，不得把棋盘推到首屏之外。若当前引擎未内置这些规则，必须回到引擎/导出器层做可复用修复并重新验证，或将发布标记为阻塞。
+- 修改移动端 CSS 或发布前必须运行 `node builder/qa-mobile-layout.mjs <static-export-dir>`（或等价检查）并保存报告；若 `qa-mobile-layout` 失败，不得通过复制旧店铺补丁来强行过关。
+- 发布前必须保存视觉语义 QA 证据：至少包含 `tiles/contact-sheet-with-names` 或等价逐格记录，证明每个 `item_*.png` 的实际视觉内容与 `tiles/manifest.json` 中的 `name/description` 对应；不能只证明文件存在或 URL 可访问。
+
 必须按当前 worker 真实顺序推进和校验，不要按旧顺序臆造：
 
 1. concept
@@ -178,13 +246,31 @@ shopText, shopInk, shopMuted
 12. ready session
 13. static export
 14. QA check
-15. publish share link
+15. mobile layout QA with `builder/qa-mobile-layout.mjs` when publishing or after any mobile CSS change; if it fails because the current engine lacks mobile rules, stop and report/fix the engine layer, do not paste cross-shop CSS into the export
+16. cross-shop contamination QA with `builder/qa-static-shop.mjs`
+17. publish share link
 
 要求：
+- 静态导出必须使用通用导出器 `builder/export-static-shop.mjs <session.json> <out-dir>` 或等价脚本；不得使用带旧主题硬编码的导出脚本。
+- QA 必须使用 `builder/qa-static-shop.mjs <static-export-dir> --expect-shop "<shop>" --expect-world "<world>" --forbid "<old-shop-keywords>"`，并保存报告。
+- 移动端 QA 必须使用 `builder/qa-mobile-layout.mjs <static-export-dir>` 或等价脚本，确认 phone/coarse pointer 下 board 优先、5x5 棋盘 1:1、无横向溢出、assistant/task/status/trash 等 secondary UI 不阻塞首屏玩法，并保存报告。若失败，不得通过复制其它店铺的移动端 CSS 补丁修改单店导出；只能修复当前引擎/通用导出器，或将该轮发布阻塞。
+- 详见事故复盘：`supermarket/qa/cross-shop-contamination-lessons.md`。
+- 详见 source-of-truth/静态状态复盘：`supermarket/qa/static-shop-source-of-truth-lessons.md`。
 - 不允许跳过 `content pack` 直接出最终商品图。
+- **content pack 必须在任何 `shop_sheet_4x8` 生图之前最终锁定**。禁止在商品图板已经生成后再把商品名称、链条、tier、content pack 改成另一套主题文案；这会造成“图是旧物品、名字是新物品”的错配。
+- 当前引擎的 4x8 商品板固定支持 32 个 slot，默认链条顺序和数量必须与运行时一致：`botanical` 6、`alchemy` 6、`curio` 6、`waste` 6、`secret` 8。不要临时新增 `signature` 等未被默认运行时/切图计划识别的链条来承载商品；如确需新链条，必须同时改运行时默认链、sheet slot plan、合成逻辑和 QA。
+- 生成 `shop_sheet_4x8` 的 prompt、`tiles/manifest.json`、`session.runtimeConfig.contentPack`、`session.runtimeConfig.tileManifest`、导出后的 `generated/assets/tiles/manifest.json`、`static-session.js` 嵌入 runtime 必须全部来自同一份最终 content pack。
+- 商品图板绑定 QA 必须做字段级比对：按 4x8 左到右、上到下检查每个 slot 的 `itemId/chainId/chainLabel/tier/name/description/fileName/url`，确认 `contentPack.chains`、`tileManifest.tiles[]`、`tileManifest.bindings[*]`、导出 manifest、嵌入 `window.__SHOP_RUNTIME__.tileManifest` 完全一致。任何 mismatch 都必须阻止发布并重跑商品图板；不得只改 JSON 冒充修复。
+- **商品图视觉语义 QA 是强制闸门**：`item_1_1.png`、`item_1_2.png` 等文件名只是网格坐标，不是商品名。切图后必须生成 contact sheet 或等价逐格审查表，把每张 tile 图放在对应的 `row/col/fileName/itemId/chainId/tier/name/description` 旁边，并使用模型视觉能力/人工视觉检查确认“实际图片内容”与 manifest 名称描述一致。只检查整张 raw sheet 大概像主题、只检查文件存在、只检查 URL 能打开，都不算通过。
+- 如果视觉内容和 manifest 名称不一致：若图片内容本身正确但顺序漂移，可以按实际视觉顺序重排 manifest 并重新 QA；若图片内容错误、含混、跨格、含旧主题或含文字，必须从锁定 content pack 重新生成 shop sheet 并重新切图。禁止只改 manifest/session 文案来掩盖图片错配。
+- Assistant portrait 也必须做同级绑定 QA：四个 portrait 文件、`assistant_portraits/manifest.json`、`session.runtimeConfig.assistantPortraits`、`static-session.js`、首屏 HTML/运行时 DOM 的头像 `src` 必须指向同一 build 的 `./generated/assets/assistant_portraits/*.png`，不得指向旧 job、其它商店、`/workspace`、`/Downloads` 或根路径 `/generated`。
+- 如果发现商品图板是在旧 content pack 下生成的，正确修复是：先锁定最终 content pack → 重新生成 shop sheet → 重新切图 → 重新写 manifest → 重新导出/QA/发布。只重命名 manifest 或 session 只能修文案，不能证明图片视觉与名称对应，不能作为合格成品。
 - 不允许在主题色 token 缺失时继续导出。
 - 不允许在未确认当前轮结果可用时提前宣布下一轮完成。
 - 不允许把项目默认旧素材当成正式完成结果。
+- 不允许用程序占位图、本地手画 SVG、未按模板生成的拼贴图，冒充 Neta skill 正式素材。
+- 不允许为了赶进度跳过 `remove_background`、跳过固定网格切分、跳过 manifest 绑定 QA。
+- Neta 图片生成必须按资产类型**一张一张串行执行**；不要并发触发多张 `make_image/remove_background`，也不要把并发/重试导致的失败误判为额度问题。严禁用 `multi_tool_use.parallel`、后台 shell `&`、多个终端、多个 worker 进程同时发起 Neta 图片任务。必须等当前 `make_image` 完整返回并记录 UUID/URL，再调用同一张图的 `remove_background`；必须等该 `remove_background` 完整返回并记录 cutout UUID/URL 后，才能进入下一张资产。若失败，先串行重试当前单张资产并记录 stdout/stderr。
 - 每轮关键资产完成后，都要向用户返回一条沉浸式进度播报。
 
 #### 引擎兼容性注意
@@ -194,6 +280,57 @@ shopText, shopInk, shopMuted
 - 处理这类兼容问题时，不要降低“必须真实出图”的标准，也不要退回程序占位图作为最终成品。
 
 ### 阶段 4：生成格式要求
+
+#### 4.0 Neta 出图与切图硬性流程
+
+所有图片资产都必须使用对应 `builder/skills/shop-builder/prompt_*.md` 模板生成，不得只写泛泛主题词。每一种资产必须按以下顺序**串行**处理；禁止并发、禁止后台执行、禁止多个 Neta 图像任务重叠：
+
+1. 使用该板块专属 prompt 模板调用 Neta `make_image`，等待命令结束。
+2. 记录返回的 artifact UUID 和 URL。
+3. 对同一张图调用 Neta `remove_background`，等待命令结束。
+4. 记录 cutout UUID 和 URL。
+5. 下载 raw 与 cutout，保留证据。
+6. 将去背景结果放入透明画布，保持目标 sheet 比例，不得非等比压缩。
+7. 按固定网格 crop/split。
+8. 对每个切片单独 trim 透明边缘。
+9. 写入 manifest，并用 manifest 绑定到 runtimeConfig。
+10. QA 检查页面实际加载的是这些切片，而不是默认旧素材或 raw sheet。
+11. 完成当前板块后，才允许开始下一板块的 `make_image`。
+
+严禁：
+- 同时启动多个 `make_image` 或 `remove_background`，包括通过 `multi_tool_use.parallel`、后台 `&`、多个 shell、多个本地 worker、未停止的旧 worker 造成的重叠请求。
+- 先 crop 再去背景。
+- 对整张 sheet 使用 `resize WIDTHxHEIGHT!` 这类非等比强制压缩，尤其是 `ui_button_stickers_1x5`，会把按钮图标压扁。
+- 把 decor 场景贴纸当作合成材料 tile。
+- 把完整场景、海报、拼贴、室内图切成合成材料。
+- 跳过各板块 prompt 模板，手写一个笼统 prompt 代替。
+- 因一次串行之外的失败就宣布“额度不足”；需要确认不是并发、重试堆叠、环境变量或 token 传递问题。
+
+推荐 ImageMagick 顺序示例：
+
+```bash
+# UI 1x5 示例：优先使用 remove_background/cutout 的完整横条，而不是 opaque raw。
+# 如果 cutout 仍保留完整 5:1 左右布局：透明背景等比缩放到 1600x320，再按 5 个 320x320 cell 切。
+convert ui_cutout.png \
+  -resize 1600x320 \
+  -background none -gravity center -extent 1600x320 \
+  PNG32:ui_button_stickers_1x5.png
+
+for c in 0 1 2 3 4; do
+  convert ui_button_stickers_1x5.png \
+    -crop 320x320+$((c*320))+0 +repage \
+    PNG32:ui_buttons/button_1_$((c+1)).png
+done
+```
+
+UI 按钮特别经验（已发生过事故）：
+- 不要直接 split opaque raw UI sheet；raw 的白/灰背景会让每个 button 的 alpha bounds 变成完整 `320x320`，浏览器会显示成方块背景，看起来像“按钮解析错了”。
+- UI button runtime cell 建议保留 `320x320` 透明画布，不要像普通贴纸一样 `-trim` 成不等尺寸；稳定布局靠透明 canvas，QA 靠 alpha bounds。
+- 每个 button 的 alpha bounds 必须“有意义但不是整格”：拒绝 `1x1`、近空图、以及 `320x320`/近 full-cell opaque background。
+- 如果 cutout 被裁成中间内容带且破坏 5:1 横条布局，必须改用 `remove_background_nocrop` 或重跑 UI board；不能把 center-cropped cutout 当 1x5 split。
+- 静态导出的 `index.html` 还必须把五个可见按钮 `<img data-ui-sticker>` 的 `src` 预绑定到本次 build 的相对路径：`./generated/assets/ui_buttons/button_1_1.png` 到 `button_1_5.png`。不要只依赖 JS 启动后根据 manifest 再去填空 `src=""`；UI 按钮是预存在 DOM 里的节点，首屏/缓存/重置时序问题会让 manifest-only 方案表现为按钮没解析对。
+- 静态模式下 `resetGeneratedStickerAssets()` 必须优先使用 `window.__SHOP_UI_BUTTON_MANIFEST__`，不得把 UI 按钮重置回默认/旧图。`loadRuntimeStickerAssets()` 也应先用 embedded UI manifest，再尝试 fetch。
+- 详见 workspace 记录：`supermarket/qa/ui-button-runtime-binding-lessons.md`。
 
 #### 4.1 assistant portraits
 
@@ -216,11 +353,18 @@ shopText, shopInk, shopMuted
 
 产物要求：
 - `assistant_sheet_2x2.png`
+- `assistant_sheet_2x2_raw.png` 或等价 raw 记录
+- `assistant_sheet_2x2_cutout.png` 或等价 remove_background 记录
 - `assistant_portraits/manifest.json`
 - `assistant_portraits/smile.png`
 - `assistant_portraits/serious.png`
 - `assistant_portraits/angry.png`
 - `assistant_portraits/confused.png`
+
+QA 必查：
+- 四个表情必须来自严格 2x2 角落布局，不得把一张立绘硬切成四块。
+- 去背景后每个 portrait 不应带大块白底或被裁断头发/肩膀/手。
+- manifest 顺序必须是 `smile, serious, angry, confused`，并与页面实际显示 URL 一致。
 
 #### 4.2 shop sheet
 
@@ -231,6 +375,7 @@ shopText, shopInk, shopMuted
 - 32 个商品/材料图标
 - pure white background
 - 无文字、无 label、无 logo、无 typography、无 letters、无 numbers
+- **严禁把商品名、链条名、tier、slot note 或任何可读/近似可读文字画进图标里**。即使文字内容正好等于 content pack 的 `name`，也必须视为失败；合成物素材只能用形状、颜色、材质和图案表达语义。
 - 无边框、无分隔线、无格子线
 - 每个物品居中且略小于格子
 - 四周有足够白边
@@ -240,8 +385,20 @@ shopText, shopInk, shopMuted
 
 产物要求：
 - `shop_sheet_4x8.png`
+- `shop_sheet_4x8_raw.png` 或等价 raw 记录
+- `shop_sheet_4x8_cutout.png` 或等价 remove_background 记录
 - `tiles/manifest.json`
 - `tiles/*.png`
+
+QA 必查：
+- 合成台 tile 必须是商品/材料 icon，不得是店铺场景、海报、装饰贴纸、UI 图标或完整柜台。
+- 32 个 itemId 必须与 `runtimeConfig.contentPack.chains` 的物品名和顺序绑定。
+- `runtimeConfig.tileManifest.bindings` 必须覆盖所有可发现 item，页面实际 `imageUrl` 必须来自这些 bindings。
+- 切图前必须完成去背景；切片应有透明背景，不得整格白底或跨格残影。
+- 必须生成并保存 `tiles/contact-sheet-with-names` 或等价 QA 证据，逐格显示 tile 图片与 `fileName/itemId/name/description`。使用视觉能力确认每张 tile 的实际内容与对应 name/description 匹配；例如不能让篮子图对应“防风草种子包”，也不能让种子包图对应“背包升级券”。
+- **视觉语义 QA 必须同时做“无文字/OCR”检查**：逐格查看 raw sheet、cutout、contact sheet 和每个 `tiles/item_*.png`，确认没有商品名、汉字、英文、数字、伪文字、logo、标签、包装字样、UI 字或手写标记。仅靠 URL/manifest/文件存在、或只检查图像大致主题正确，不能通过 QA。
+- 若任一 tile 上出现可读或疑似可读文字，尤其是把该 slot 的 `name` 直接写在物品、标签、牌子、瓶身或包装上，必须判定 shop sheet 不合格并重新生成；不得裁掉文字、PS 涂抹、缩小到看不清或在 QA 报告中豁免。
+- 若模型没有严格遵守 slot plan，必须在发布前发现并处理：可重排 manifest（仅当视觉内容都正确且只是顺序错）、局部替换（若管线支持）、或重跑整张 shop sheet。不得把错配的图片和名字一起发布。
 
 #### 4.3 decor stickers
 
@@ -266,8 +423,15 @@ shopText, shopInk, shopMuted
 
 产物要求：
 - `shop_decor_stickers_2x3.png`
+- `shop_decor_stickers_2x3_raw.png` 或等价 raw 记录
+- `shop_decor_stickers_2x3_cutout.png` 或等价 remove_background 记录
 - `shop_decorations/manifest.json`
 - `shop_decorations/*.png`
+
+QA 必查：
+- `shop_decorations/manifest.json` 中 `stickers` 必须是数组，且至少 6 项；当前 app 的 `mapDecorationManifest()` 读取数组，不读取对象形态。
+- 每个 sticker URL 必须能从静态导出相对路径加载。
+- 页面中的装饰托盘必须加载本轮主题装饰，不得回退到默认 Ollivanders/Harry Potter 装饰。
 
 #### 4.4 UI button stickers
 
@@ -288,8 +452,30 @@ shopText, shopInk, shopMuted
 
 产物要求：
 - `ui_button_stickers_1x5.png`
+- `ui_button_stickers_1x5_raw.png` 或等价 raw 记录
+- `ui_button_stickers_1x5_cutout.png` 或等价 remove_background 记录
 - `ui_buttons/manifest.json`
 - `ui_buttons/*.png`
+
+QA 必查：
+- `ui_buttons/manifest.json` 必须包含 `bindings.hall`、`bindings.codex`、`bindings.shelf`、`bindings.reset`、`bindings.trash`；当前 app 的 `mapUiButtonManifest()` 读取 `bindings`，不是 `stickers`。
+- 左到右顺序必须严格是 hall/codex/shelf/reset/trash。
+- 必须先去背景，再补透明 5:1 画布，再等比 resize，再 crop 1x5；不得用非等比 `resize 1600x320!` 压扁图标。
+- 页面 DOM 中 `[data-ui-sticker]` 的实际 `src` 必须被替换为本轮 `ui_buttons` 切片，不得保留默认 HP wood 图标。
+
+#### UI 按钮运行时绑定强制闸门
+
+UI 按钮是高风险资产板块；以下任一项失败都不得发布：
+
+- `ui_button_stickers_1x5` 在归一化过程中必须保持完整 5:1 横条布局。常见事故是 `remove_background` 把整条横图裁成中间内容带，再把这个被裁过的带子补成 5:1，结果切出 4 个透明 `1x1` 按钮。如果 cutout 尺寸明显不是 5:1，必须对同一 artifact 使用 `remove_background_nocrop`，或从 raw sheet 重建透明 5:1 画布后再切。不得把居中裁切后的 cutout 直接当原始 1x5 sheet 来切。
+- UI 1x5 的正确处理顺序：raw/Neta artifact → `remove_background` 或 `remove_background_nocrop` → 保留完整左右顺序的透明 5:1 画布 → 等比 resize 到 1600x320（禁止 `!`）→ crop 五个 320x320 cell → 每格 alpha trim。
+- 切图后必须检查每个按钮 PNG 的 alpha bounds：`hall/codex/shelf/reset/trash` 都不能是 `1x1`、近似空透明图或只有极细横条；只要出现 1x1/空图，即使文件存在也算 QA 失败。
+- `ui_buttons/manifest.json` 必须包含 `bindings.hall/codex/shelf/reset/trash`，并且五个 URL 必须指向同一 build 的五个切片，顺序严格 hall/codex/shelf/reset/trash。
+- 静态导出必须注入 `window.__SHOP_UI_BUTTON_MANIFEST__`，或确保 `uiButtonManifestUrl` 能稳定 fetch；静态模式下 `app.js` 应优先使用 embedded UI manifest，或至少在 fetch 失败时 fallback 到 embedded manifest，不能因为 `ui_manifest.json` 路径/缓存/异步失败而静默回到默认按钮。
+- `resetGeneratedStickerAssets()` 在 QA 通过的静态成品中不得把 UI 按钮重置为 HP/default 资产；静态模式下应重置到本轮 embedded/generated UI manifest，并调用 `applyUiButtonStickerUrls()`。
+- 必须验证真实运行 DOM，而不是只验证文件：`[data-ui-sticker="hall|codex|shelf|reset|trash"]` 的实际 `src` 必须能从静态导出根目录解析到本 build 的 `ui_buttons/button_1_*.png`，不得是 `hp-wood`、`/generated/shop-stickers`、`/Downloads`、`/workspace` 或空 `src`。
+- 如果曾经发布过坏按钮版本，重新发布时必须加 cache-busting query 或等价措施，避免浏览器继续加载旧的坏 `app.js`、`static-session.js` 或 1x1 PNG。
+
 
 ### 阶段 5：content pack 要求
 
@@ -344,6 +530,11 @@ shopText, shopInk, shopMuted
 - `decorationManifestUrl`
 - `uiButtonManifestUrl`
 
+静态 final 额外要求：
+- `contentPack` 必须是本店完整包，不得缺字段后依赖默认旧主题补齐。至少显式包含 `sources`、`clients`、`chains`、`recipes`、`blessings`、`introSequence`；如果没有特殊配方/祝福，也必须写 `recipes: []`、`blessings: []`，并确保 static runtime 不自动合入默认 demo 值。
+- `theme` 必须同时进入 `session/static-session` 和首屏 HTML/CSS 预水合变量，避免 JS 未启动时露出旧主题。
+- static save/localStorage namespace 必须与 `shopName/worldName/slug/buildId` 绑定或拒绝旧存档。
+
 `savedState` / 存档如被导出，应保留或兼容：
 - `decorPositions`
 - `decorSlotPositions`
@@ -370,10 +561,10 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
 1. 复制必要前端文件：
    - `index.html`
    - `app.js`
-   - `creator.js`，如果静态页仍依赖其函数；否则可不加载
    - `styles.css`
    - `sfx.js`
-   - `neta-config.js` / `neta-auth.js` 仅在不会触发登录和不会泄露敏感信息时保留；纯静态成品应尽量绕过 auth
+   - `creator.js`、`neta-config.js`、`neta-auth.js` 一般不应加载到最终静态成品；除非静态页确实依赖其函数且已证明不会展示建店页/触发登录/泄露敏感信息
+   - 不要复制或加载与当前店铺无关的实验脚本/主题补丁（例如其他 demo 的 `*-barracks.js/css`）；这些脚本可能注册全局 pointer/drag/click 监听并破坏合成台交互
 2. 复制必要资源：
    - `assets/sfx/`
    - 当前 session 用到的 `generated/build-artifacts/<jobId>/...`
@@ -389,11 +580,28 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
    - 不依赖 `GET /api/session`
    - 不要求 OAuth 登录
    - 不展示建店输入页
+   - 删除/隐藏 creator 页面时必须保留运行时节点：`#appShell`、`#dragLayer`、`#toastStack`、各 overlay 容器（intro/report/item/library）以及 board/trash/source/order/sidebar 等核心 DOM。不要用过宽正则把 `creatorOverlay` 后面的 `dragLayer`、`toastStack` 或启动脚本一起删掉。
    - 页面加载后直接调用或等价执行：`resetShopState(runtimeConfig, { introSeen: false })`，并显示 `#appShell`
    - 如果导出包含玩家已布置好的装饰布局，应在 reset/import 后恢复 `decorPositions`、`decorSlotPositions` 或等价 `decorEntries`
 6. 路径处理：
-   - 所有 `/generated/...`、`/assets/...`、`/Downloads/...` 等必须转换为静态站点内可访问路径，优先相对路径或站内绝对路径
-   - 不允许引用本地绝对文件路径
+   - 所有 `/generated/...`、`/assets/...`、`/Downloads/...` 等必须转换为静态站点内可访问路径。
+   - 对 Cohub public share 这种 `/s/<space-id>/<slug>/index.html` 子路径发布，**不要保留根路径 `/generated/...` 或 `/assets/...`**；优先转换为 `./generated/...` 和 `./assets/...`。
+   - 不允许引用本地绝对文件路径，例如 `/workspace/...`。
+   - 必须递归处理 `session.json` / `static-session.js` / runtimeConfig / manifest 中的所有资源 URL：`assistantPortraits.*`、`tileAssetBase`、`tileManifest.tileBaseUrl`、`tileManifest.tiles[].url`、`tileManifest.bindings[*].url`、`decorationManifestUrl`、`uiButtonManifestUrl`、decor `stickers[].url`、UI `bindings.*.url`。
+   - 只改 `session.json` 不够；如果 `app.js` 会在启动、重置、导入存档时接收 runtimeConfig，必须在这些入口调用 URL sanitizer，避免运行时重新使用 `/generated/...`。
+
+#### 静态 URL 解析防错要求
+
+本项目曾出现“图文件正确存在，但页面没加载正确图”的问题。原因是静态页发布在 `/s/<space-id>/<slug>/` 子路径下，runtime/manifest 仍保留 `/generated/...` 根路径，浏览器实际请求到了 `https://public.cohub.run/generated/...` 而不是当前 slug 下的资源。以后必须按以下要求处理：
+
+- 静态导出必须包含或注入等价的 `resolveStaticAssetUrl(url)`：在 `window.__SHOP_STATIC_MODE__` 下把 `/generated/...` 转为 `./generated/...`，把 `/assets/...` 转为 `./assets/...`。
+- 必须包含或注入等价的 `sanitizeRuntimeAssetUrls(config)`，递归清洗 `assistantPortraits`、`tileAssetBase`、`tileManifest`、`decorationManifestUrl`、`uiButtonManifestUrl`。
+- `rebuildCatalogFromContentPack()` 或任何建立商品索引的逻辑，不能直接使用 `tileBindingIndex[id].url`；必须先走 `resolveStaticAssetUrl(...)`。
+- `renderAssistant()` 或任何助手头像渲染逻辑，不能直接使用 `runtimeConfig.assistantPortraits[...]`；必须先走 `resolveStaticAssetUrl(...)`。
+- item detail、board item、decor sticker、UI button、manifest fetch 也要在使用 URL 前清洗。
+- fallback 默认素材也必须替换到当前 build，或保证不会在成品中生效；不得让 `/Downloads/hermione...`、`/Downloads/magic_assets...`、`hp-wood`、`ollivanders-decor` 作为活跃 fallback。
+
+参考复盘与 QA 清单：`supermarket/qa/static-url-binding-lessons.md`。
 
 #### 图片与名称绑定 QA
 
@@ -432,11 +640,11 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
 - `session.enteredShop === true` 或静态页会直接进店
 - `runtimeConfig.theme` 25 个必需基础 token 全部存在，并且页面运行时派生出的可读色 token 生效
 - `runtimeConfig.contentPack` 结构完整
-- `runtimeConfig.tileAssetBase` 可访问
-- `runtimeConfig.tileManifest.bindings` 存在
+- `runtimeConfig.tileAssetBase` 可访问，且在 public share 子路径下解析后能命中静态目录文件，不是根路径 `/generated/...`
+- `runtimeConfig.tileManifest.bindings` 存在，且每个 binding URL 经过静态路径解析后可访问
 - 4 张助手表情图可访问
-- `decorationManifestUrl` 可访问且至少 6 个装饰
-- `uiButtonManifestUrl` 可访问且包含 hall/codex/shelf/reset/trash
+- `decorationManifestUrl` 可访问且至少 6 个装饰；decor manifest 内 `stickers[].url` 也必须是静态子路径可加载 URL
+- `uiButtonManifestUrl` 可访问且包含 hall/codex/shelf/reset/trash；UI manifest 内 `bindings.*.url` 也必须是静态子路径可加载 URL
 
 #### 页面体验
 
@@ -449,14 +657,64 @@ node builder/export-static-site.mjs --session <session.json> --output <dir>
 - 入场序章、订单、补给、图鉴、收藏、经营回顾基本可用
 - 音效文件不 404；浏览器限制下未自动播放不算失败，但用户交互后应可触发音效
 - 页面资源没有泄露 token、内部日志、绝对路径或 secrets
+- 检查 `#dragLayer` 和 `#toastStack` 存在；拖拽合成依赖 `#dragLayer` 创建 ghost，缺失会导致鼠标拖拽素材时 JS 抛错并中断。
+- 检查没有加载与当前店铺无关的全局实验脚本/样式（如 `lotr-barracks.js/css`、其他 demo patch），这些脚本会覆盖 board、注册 pointer/click 监听或重绘工作台，可能阻塞拖拽。
+- grep 静态导出目录，确认没有活跃旧素材或错误路径：`/Downloads`、`hp-wood`、`ollivanders`、`Ollivanders`、`Hermione`、`赫敏`、`/workspace`、`.neta-skill-config`、`NETA_TOKEN`、`accessToken`
+- 用脚本从静态输出目录模拟 URL 解析：`assistantPortraits.serious`、`tileAssetBase/item_1_1.png`、`tileManifest.bindings[*].url`、decor `stickers[].url`、UI `bindings.*.url` 都必须能由 `<static-export>/...` 直接找到文件；仅检查文件存在但不检查 runtime URL 视为 QA 不通过
 
 ### 阶段 9：发布分享
 
-读取 `/configs/platform/.agents/skills/public-share/SKILL.md` 的规则。
+必须读取并遵守 `/configs/platform/.agents/skills/public-share/SKILL.md` 的规则。
 
 做法：
 1. 把通过 QA 的静态目录复制到 `/public/<subfolder>/`
 2. 返回直达 `index.html` 的 URL
+
+#### Cohub public-share URL 强制规则
+
+本 workspace 的最终分享链接必须使用 Cohub public-share 前缀，不得凭空改成其他域名，也不得返回本地路径或裸 slug。
+
+正确格式：
+
+```text
+${PUBLIC_URL_PREFIX}/<subfolder>/index.html
+```
+
+通常等价于：
+
+```text
+https://public.cohub.run/s/<COHUB_SPACE_ID>/<subfolder>/index.html
+```
+
+严禁把以下形式作为最终给用户的分享链接：
+
+```text
+https://cohub.ai/public/<subfolder>/index.html
+/public/<subfolder>/index.html
+/<subfolder>/index.html
+```
+
+发布前必须验证：
+
+```bash
+test -f /public/<subfolder>/index.html
+printf '%s/%s/index.html\n' "$PUBLIC_URL_PREFIX" "<subfolder>"
+```
+
+如果 `/configs/platform/.agents/skills/public-share/SKILL.md` 因 stale NFS handle 暂时不可读，仍必须按照上面的 `PUBLIC_URL_PREFIX` 规则输出 URL；不要因此猜测或使用 `cohub.ai/public/...`。
+
+同时在 `supermarket/published/<subfolder>.json` 写入发布记录，至少包含：
+
+```json
+{
+  "slug": "<subfolder>",
+  "path": "/public/<subfolder>",
+  "url": "${PUBLIC_URL_PREFIX}/<subfolder>/index.html",
+  "shopName": "...",
+  "jobId": "...",
+  "status": "published"
+}
+```
 
 注意：
 - `/public` 只作为发布目标，不要在那里开发。

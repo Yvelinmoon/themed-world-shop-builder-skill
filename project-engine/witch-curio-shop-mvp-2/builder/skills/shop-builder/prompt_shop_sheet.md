@@ -1,17 +1,12 @@
-Generate a single sprite sheet for a top-down / slight-front-view shop merge game.
+Generate one clean 4x8 sprite sheet for an original themed merge shop game.
 
-Use the image-gen prompt template below:
+Canvas: pure white background, 1536x768, 4 rows, 8 columns, no grid lines.
+Each cell: exactly one centered isolated merchandise icon, generous padding, no overlap.
+Style: cute polished game inventory icons, soft pastel lighting, crisp readable shapes, 3/4 front view, transparent-friendly edges.
 
-A game asset tile sheet with {N} rows and {M} columns on pure white background,
-containing {total_count} {theme} themed items arranged in a neat {N}x{M} grid
-layout without borders or dividers.
-Row 1: {item_1}, {item_2}, {item_3}...
-Row 2: {item_4}, {item_5}, {item_6}...
-Clean casual game icon style, minimal design, soft colors, consistent size,
-pure white background, no text no labels no logos no typography no letters no numbers
-no package copy no watermarks no frames no borders no dividing lines,
-slot notes are semantic guidance only and must never be rendered as visible words,
-every item must stay clearly inside its own slot with generous white padding on all sides,
-leave obvious empty whitespace between neighboring items, never let silhouettes touch or overlap,
-keep each prop centered and slightly smaller than the slot so cropping and splitting remain safe,
-game asset quality, crisp clean illustrationn
+Important: no words, no letters, no numbers, no captions, no labels, no signs, no UI, no paragraphs, no watermark. Blank packaging only.
+
+Theme source of truth: current shop idea, shop summary, content pack item names, item descriptions, and the slot plan below. Do not use unrelated demo/default categories, props, motifs, or example items from previous shops. If an object is not implied by the current content pack slot, do not generate it.
+
+Slot plan is binding. Create one visual object for each slot, matching that slot's item name and description through shape, material, color, and theme motifs only.
+Higher tiers look more valuable. Failed-result items look like believable mishaps. Rare-result items look delightful and premium.

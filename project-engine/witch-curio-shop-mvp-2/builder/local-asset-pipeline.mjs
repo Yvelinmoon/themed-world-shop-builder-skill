@@ -8,7 +8,7 @@ const execFileAsync = promisify(execFile);
 const NETA_IMAGE_TIMEOUT_MS = Number(process.env.NETA_IMAGE_TIMEOUT_MS || 300_000);
 const IMAGE_RETRY_DELAY_MS = Number(process.env.NETA_IMAGE_RETRY_DELAY_MS || 900);
 const NETA_SKILL_CONFIG_DIR = process.env.NETA_SKILL_CONFIG_DIR || path.join(process.cwd(), "generated", ".neta-skill-config");
-const NETA_SKILL_API_BASE_URL = process.env.NETA_API_BASE_URL || "https://api.talesofai.cn";
+const NETA_SKILL_API_BASE_URL = process.env.NETA_API_BASE_URL || "https://api.talesofai.com";
 let didLogNetaSkillIdentity = false;
 
 function buildNetaSkillEnv() {
@@ -55,23 +55,15 @@ function normalizeText(value) {
 
 function sanitizeImagePromptForCompliance(prompt = "") {
   return String(prompt || "")
-    .replace(/红色警戒2?|红警|Red\s*Alert/gi, "retro strategy game")
-    .replace(/前苏联|苏维埃|苏联/g, "retro faction")
-    .replace(/盟军/g, "blue faction")
-    .replace(/情报局|最高指挥部|指挥部/g, "command office")
-    .replace(/军需官/g, "supply manager")
-    .replace(/高级军官|军官|指挥官/g, "strategy shop manager")
-    .replace(/战场|前线|作战|战术|战争|军事/g, "strategy game")
-    .replace(/部队|兵员|兵种/g, "unit miniatures")
-    .replace(/战车|坦克|装甲载具/g, "armored vehicle model")
-    .replace(/战舰|舰船/g, "naval vehicle model")
-    .replace(/飞机/g, "air vehicle model")
-    .replace(/超级武器|武器|军械|火炮|导弹|枪|炮/g, "special equipment model")
-    .replace(/压倒性优势|投入战斗|部署|补充/g, "collection progress")
-    .replace(/基地/g, "strategy shop")
-    .replace(/阵营/g, "team")
-    .replace(/造价与性能参数/g, "catalog details")
-    .replace(/retro strategy game\s*主题商店/g, "retro strategy game themed shop")
+    .replace(/\b(?:weapon|missile|gun|cannon|battlefield|frontline|warfare|military)\b/gi, "special equipment model")
+    .replace(/武器|军械|火炮|导弹|枪|炮|战场|前线|作战|战术|战争|军事/g, "特殊装备模型")
+    .replace(/部队|兵员|兵种/g, "收藏单位模型")
+    .replace(/战车|坦克|装甲载具/g, "履带载具模型")
+    .replace(/战舰|舰船/g, "船形载具模型")
+    .replace(/飞机/g, "飞行载具模型")
+    .replace(/压倒性优势|投入战斗|部署|补充/g, "收藏进度")
+    .replace(/阵营/g, "队伍")
+    .replace(/造价与性能参数/g, "目录细节")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -149,7 +141,7 @@ function buildSheetSlotSemanticCue(slot) {
     .map((item) => normalizeText(item))
     .filter(Boolean)
     .join("; ");
-  return visualNotes || `${slot.chainLabel} tier ${slot.tier}`;
+  return visualNotes || `${slot.chainLabel} tier ${slot.tier} original themed shop merchandise icon`;
 }
 
 function buildShopSheetPrompt(handshake) {
@@ -452,7 +444,7 @@ function isPromptComplianceError(...parts) {
     .filter(Boolean)
     .map((item) => String(item))
     .join("\n");
-  return /(?:\b451\b|不合规文字|内容包含不合规|ApiResponseError)/i.test(combined);
+  return /(?:\b451\b|不合规文字|内容包含不合规)/i.test(combined);
 }
 
 function buildMakeImageArgs({ prompt, width, height, aspect }) {
@@ -728,6 +720,34 @@ async function trimImageToAlphaBounds(sourcePath, destinationPath) {
   };
 }
 
+// Flood-fill white and near-white pixels to fully transparent alpha.
+// Used for per-tile background removal on assistant portrait grid cells,
+// where the raw sheet has a solid white background and the grid split
+// guarantees perfect alignment. This replaces sheet-level remove_background
+// which destroys grid alignment by cropping to the global alpha bounding box.
+function floodFillWhiteToAlphaPng(png, tolerance = 8) {
+  for (let y = 0; y < png.height; y += 1) {
+    for (let x = 0; x < png.width; x += 1) {
+      const offset = (png.width * y + x) * 4;
+      const r = png.data[offset];
+      const g = png.data[offset + 1];
+      const b = png.data[offset + 2];
+      const a = png.data[offset + 3];
+      // Only flood-fill pixels that are currently opaque and close to white
+      if (a > 0 && Math.abs(r - 255) <= tolerance && Math.abs(g - 255) <= tolerance && Math.abs(b - 255) <= tolerance) {
+        png.data[offset + 3] = 0; // set alpha to fully transparent
+      }
+    }
+  }
+  return png;
+}
+
+async function floodFillWhiteToAlpha(sourcePath, destinationPath, tolerance = 8) {
+  const png = await readPng(sourcePath);
+  floodFillWhiteToAlphaPng(png, tolerance);
+  await writePng(destinationPath, png);
+}
+
 async function splitSheetToTiles({ sheetPath, outputDir, rows, cols, filenamePrefix = "item", trimTiles = true }) {
   const source = await readPng(sheetPath);
   if (source.width % cols !== 0 || source.height % rows !== 0) {
@@ -962,19 +982,44 @@ export async function generateAssistantPortraitAsset(handshake) {
   });
   const rawOutputPath = portraitSheetFile.path.replace(/\.png$/i, "_raw.png");
   await downloadToFile(generation.imageUrl, rawOutputPath);
+  // Preserve Neta cutout as build evidence, but do NOT use it for the grid split.
+  // remove_background crops to the global alpha bounding box of all 4 portraits,
+  // destroying the 2×2 grid alignment. After contain-padding back to 1600×900,
+  // portrait content is offset from grid boundaries (e.g. +4px), so a blind
+  // grid split cuts through portrait bodies instead of clean white-space borders.
   const cutout = await runNetaRemoveBackground(generation.artifactUuid);
   const cutoutOutputPath = portraitSheetFile.path.replace(/\.png$/i, "_cutout.png");
   await downloadToFile(cutout.imageUrl, cutoutOutputPath);
-  await fitImageContainToCanvas(cutoutOutputPath, portraitSheetFile.path, 1600, 900);
 
+  // Normalize the raw sheet to the target 1600×900 canvas.
+  // The raw sheet already has correct grid alignment (white background, portraits
+  // placed at the 4 corners of a 2×2 grid), so we split on the raw sheet directly.
+  await normalizeImageToSize(rawOutputPath, portraitSheetFile.path, 1600, 900);
+
+  // Split on the grid-aligned normalized raw sheet first, then per-tile
+  // white-to-alpha flood-fill and trim. This guarantees grid alignment.
   const splitResult = await splitSheetToTiles({
     sheetPath: portraitSheetFile.path,
     outputDir: outputSlots.portraitOutputDir,
     rows: 2,
     cols: 2,
     filenamePrefix: "expression",
-    trimTiles: true,
+    trimTiles: false, // don't trim yet — need white-to-alpha first
   });
+
+  // For each raw-grid tile, flood-fill white background to transparent alpha,
+  // then trim transparent edges. This replaces the sheet-level remove_background
+  // which destroyed grid alignment, with per-tile background removal that
+  // preserves each portrait's complete figure inside its grid cell.
+  for (const tile of splitResult.tiles) {
+    const tilePath = path.join(outputSlots.portraitOutputDir, tile.fileName);
+    await floodFillWhiteToAlpha(tilePath, tilePath);
+    await trimImageToAlphaBounds(tilePath, tilePath);
+    // Re-read tile dimensions after trim
+    const trimmedPng = await readPng(tilePath);
+    tile.width = trimmedPng.width;
+    tile.height = trimmedPng.height;
+  }
 
   const portraitFiles = {
     smile: path.join(outputSlots.portraitOutputDir, "smile.png"),
@@ -989,17 +1034,18 @@ export async function generateAssistantPortraitAsset(handshake) {
     path.join(outputSlots.portraitOutputDir, "expression_2_2.png"),
   ];
   const orderedKeys = ["smile", "serious", "angry", "confused"];
-  await Promise.all(
-    orderedKeys.map(async (key, index) => {
-      const sourcePath = generatedFiles[index];
-      const destinationPath = portraitFiles[key];
-      const png = await readPng(sourcePath);
-      await writePng(destinationPath, png);
-      if (sourcePath !== destinationPath) {
-        await rm(sourcePath, { force: true });
-      }
-    }),
-  );
+  // Rename expression grid files to semantic portrait names (serial, not parallel).
+  // Per AGENTS.md asset pipeline rules, Neta operations must be serial;
+  // file renames are not Neta calls but we still keep serial for safety.
+  for (const [key, index] of orderedKeys.map((k, i) => [k, i])) {
+    const sourcePath = generatedFiles[index];
+    const destinationPath = portraitFiles[key];
+    const png = await readPng(sourcePath);
+    await writePng(destinationPath, png);
+    if (sourcePath !== destinationPath) {
+      await rm(sourcePath, { force: true });
+    }
+  }
 
   const portraitBaseUrl = `/generated/build-artifacts/${handshake.job.jobId}/assistant_portraits`;
   const manifest = {

@@ -113,6 +113,29 @@ const builderPrompts = {
   worldPatch: await readFile(path.join(PROFILE_ROOT, "prompt_world_patch.md"), "utf8"),
 };
 
+function assertPromptTemplatesClean(prompts = {}) {
+  const forbidden = [
+    "Stardew", "Pierre", "Hermione", "Ollivanders", "Harry Potter", "Hogwarts", "霍格沃茨",
+    "Starbucks", "Mars", "Elon", "lotr", "red-alert", "laoqin", "老秦", "红色警戒",
+    "hp-wood", "pinseng", "coffee-neta", "lego", "cozy farming", "farm-town",
+    "farming general-store", "seed-store", "valley seed-store", "valley grocery", "parsnips",
+    "fertilizer sacks", "wooden seed shop", "warm wooden seed shop",
+    "middle-aged male general-store owner", "green shop apron", "small-town grocery owner", "seed shop atmosphere",
+  ];
+  const failures = [];
+  for (const [name, text] of Object.entries(prompts)) {
+    const lower = String(text || "").toLowerCase();
+    for (const term of forbidden) {
+      if (lower.includes(term.toLowerCase())) failures.push({ prompt: name, term });
+    }
+  }
+  if (failures.length) {
+    throw new Error(`Prompt template contamination detected: ${JSON.stringify(failures)}`);
+  }
+}
+
+assertPromptTemplatesClean(builderPrompts);
+
 function buildStaticContentPack(concept = {}) {
   const shopName = concept.shopName || "这家店";
   const assistantName = concept.assistantName || "店员助手";
